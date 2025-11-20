@@ -1,0 +1,520 @@
+Awesome — **CampusGPT (Project 4)** it is. Love this choice: it’s high-impact, very demoable on campus, and perfect as a hybrid SDE+ML flagship project (product + research + deployment + users).
+
+Below is a complete, production-minded blueprint you can follow **start-to-finish in 8 weeks (2 months)**. I included architecture, tech stack, system & ML design, database schema, frontend UX, deployment, CI/CD, telemetry, privacy, experiments for a research paper, timeline with weekly milestones, and the exact deliverables for each week so you can start coding immediately.
+
+# 1 — Project Summary (elevator pitch)
+
+**CampusGPT — The AI Brain for NIT Silchar**
+A multi-modal conversational agent and campus assistant that answers student queries (schedules, professors, buses, events, library, clubs), provides personalized recommendations (events/committee invites), surfaces campus news, and routes unresolved issues to admins. It combines RAG (vector retrieval), a lightweight knowledge graph, an admin feedback loop that updates memory, and a modern web kiosk + chat UI that can be deployed on college pages, club sites, and a physical kiosk.
+
+Key outcomes: deployable product, dashboard analytics, active user base (students), measurable improvements in query resolution, and a research/metrics section comparing retrieval strategies and active learning.
+
+---
+
+# 2 — MVP Scope (2 months)
+
+**Must-have (MVP):**
+
+* Web chat UI (React/Next.js + Tailwind) with login (SSO via college email optional)
+* Backend API (Node.js/Express or Fastify)
+* Document ingestion pipeline (crawler + manual uploader) to index college webpages, PDFs, notices, syllabus, club pages
+* Vector DB (Pinecone / Milvus) + Embeddings (OpenAI or sentence-transformers)
+* RAG pipeline: retrieval + LLM answer composition (OpenAI / Llama2 via API)
+* Admin panel to view unanswered queries & add canonical answers (human-in-loop)
+* Analytics dashboard (daily queries, top questions, accuracy, latency)
+* Deployment (frontend on Vercel, backend on Render/Heroku/Railway, DB on Supabase/Postgres)
+* Contact/feedback routing to admin email / Slack
+
+**Stretch goals (post-MVP):**
+
+* Multilingual support (Hindi/Assamese)
+* Knowledge Graph (Neo4j) linking entities (professors, courses, buildings)
+* Mobile PWA + kiosks with face recognition (optional)
+* Event recommendation model (collaborative filtering)
+* Offline caching for faster answers
+
+---
+
+# 3 — Tech Stack (recommended)
+
+**Frontend**
+
+* Next.js (React) + TypeScript
+* Tailwind CSS (rapid, modern UI)
+* Recoil / Zustand for state (or React Context)
+* Socket.io or WebSockets for real-time typing and updates
+
+**Backend**
+
+* Node.js + Fastify (or Express) + TypeScript
+* OpenAI / Anthropic / Llama API for LLM responses
+* Pinecone (vector DB) OR Milvus/Weaviate (self-hostable)
+* Postgres (Supabase or Railway) for relational data
+* Redis (Upstash) for caching session & QA cache
+
+**Data/ML**
+
+* Embeddings: OpenAI embeddings or sentence-transformers (all-MiniLM-L6)
+* RAG orchestration: LangChain-like pattern (custom or LangChain.js)
+* Knowledge Graph (optional): Neo4j or Postgres with graph-like tables
+* Fine-tuning / active learning: store admin corrections and retrain/update embeddings
+
+**Deployment / Infra**
+
+* Frontend: Vercel
+* Backend: Render / Railway / Heroku (or AWS ECS if you want production)
+* Postgres: Supabase / Railway
+* Vector DB: Pinecone (managed) or Milvus self-host
+* CI/CD: GitHub Actions
+* Monitoring: Sentry for errors, Prometheus + Grafana or Datadog (optional)
+* Logging: Papertrail / LogDNA or simple cloud logs
+
+**Tools**
+
+* GitHub for repo + Issues
+* Figma for wireframes
+* Postman for API testing
+* Google Workspace / Slack for notifications
+
+---
+
+# 4 — High-level Architecture
+
+1. **Ingestion Layer**
+
+   * Scraper (Puppeteer/BeautifulSoup) for static pages & PDFs (pdfminer, PyMuPDF)
+   * Manual uploader for admin to add PDFs, DOCs, announcements
+   * Preprocessor: text cleaning, chunking, metadata extraction (title, source, date)
+
+2. **Indexing**
+
+   * Embed chunks → push to VectorDB (Pinecone/Milvus)
+   * Save chunk metadata → Postgres (source, doc id, chunk id, keywords, embeddings pointer)
+   * Build lightweight entity table (professors, courses, locations)
+
+3. **Query Flow**
+
+   * User sends query (Web UI)
+   * Backend: check cache (Redis)
+   * If cache miss: perform vector search → top-k chunks
+   * Compose prompt: system prompt + retrieved context + user query
+   * Call LLM (OpenAI/Anthropic) → answer
+   * Post-process: classify “answer_confidence” and “source citations”
+
+4. **Admin Loop**
+
+   * If answer_confidence < threshold OR user flags “wrong”: route to admin
+   * Admin answers via panel → saved as canonical reply → re-embed + update vector DB
+   * Log correction for metrics & future fine-tuning
+
+5. **Analytics**
+
+   * Track metrics: query count, unique users, resolution rate, avg latency, top queries
+   * Dashboard displays trending topics, unanswered questions, active users
+
+Diagram (conceptual):
+User → Frontend → Backend → (Cache → VectorDB → LLM) & Postgres → Frontend
+Admin Panel → Backend → Postgres & VectorDB updates
+
+---
+
+# 5 — Data sources & ingestion plan
+
+**Immediate data sources:**
+
+* NIT Silchar official website (admissions, notices, academics)
+* Department pages (ECE)
+* Hostel rules/menus
+* Time-tables (PDF/Excel)
+* Club pages (Illuminits, Aaveg, E-cell)
+* Past FAQs (placement cell, exam cell)
+* Syllabi and lab manuals (PDF)
+* Student-made guides (maps, canteen timings)
+
+**How to ingest:**
+
+* Build a small crawler that pulls HTML & PDFs, extracts text, chunk by paragraph or 500 tokens per chunk, add metadata (URL, section, date)
+* Allow Admin manual upload for private docs (e.g., internal timetables)
+
+**Privacy note:** don’t index personal data (PII). Scrub phone numbers/emails unless permissioned.
+
+---
+
+# 6 — Database Schema (Postgres) — Minimal
+
+Tables (fields):
+
+1. **users**
+
+* id (uuid)
+* name
+* email
+* role (student/admin)
+* created_at
+
+2. **documents**
+
+* id (uuid)
+* title
+* source_url
+* uploaded_by_user_id
+* published_date
+* doc_type (pdf, html, notice)
+* status (active/archived)
+
+3. **doc_chunks**
+
+* id (uuid)
+* doc_id (fk)
+* chunk_text (text)
+* chunk_embedding_id (vector db id)
+* chunk_start_offset
+* metadata json
+* created_at
+
+4. **queries**
+
+* id (uuid)
+* user_id (nullable)
+* query_text
+* response_text
+* response_sources (json)
+* confidence_score (float)
+* resolved (boolean)
+* flagged (boolean)
+* timestamp
+
+5. **corrections**
+
+* id
+* query_id (fk)
+* admin_id
+* corrected_answer
+* action (added_to_knowledge/added_alias)
+* created_at
+
+6. **entities (for KG)**
+
+* id
+* label
+* type (professor/course/location)
+* properties json
+
+7. **analytics**
+
+* date
+* queries_count
+* unique_users
+* avg_latency
+* resolution_rate
+
+---
+
+# 7 — REST API Endpoints (sample)
+
+* `POST /api/query` — {userId?, query} → returns {answer, sources, confidence, queryId}
+* `GET /api/query/:id` — get query log
+* `POST /api/admin/correct` — {queryId, correctedAnswer, tags} → stores correction & updates index
+* `POST /api/upload` — multipart form: {file, title, metadata} → ingests doc
+* `GET /api/analytics` — aggregated metrics
+* `GET /api/top-queries` — trending queries
+* `POST /api/auth/login` — basic auth or SSO
+* `GET /api/docs/:id` — fetch doc metadata
+
+---
+
+# 8 — RAG / ML Pipeline Details
+
+1. **Chunking**
+
+   * Split doc into ~500-token chunks (overlap 50-100 tokens)
+2. **Embeddings**
+
+   * Use high-quality embedding model (OpenAI text-embedding-3-small or all-MiniLM)
+3. **Index**
+
+   * Upsert into Pinecone with metadata: {doc_id, title, url, section}
+4. **Retrieval**
+
+   * Use vector similarity + metadata filtering (e.g., doc_type=notice)
+   * Top-k = 5–8 chunks
+5. **Prompting**
+
+   * System prompt: campus rules + response style (short, cite sources, ask clarifying Q if ambiguous)
+   * Provide context chunks then question
+   * Include “if cannot find answer, say ‘I don’t know — will notify admin’”
+6. **Postprocessing**
+
+   * Extract sources from returned answer (if model references chunk ids)
+   * Compute confidence: heuristics (LLM self-reported, overlap score, length)
+7. **Human-in-loop**
+
+   * If confidence < 0.6 or user flags → forward to admin with query + top context
+   * Admin correction stored → new doc chunk or canonical answer inserted & embedded → upsert
+
+**Experiment ideas (research):**
+
+* Compare precision@k and hallucination rate for:
+
+  * LLM-only vs RAG w/ embeddings
+  * RAG w/ vector-only vs RAG + KG linking (entity grounding)
+* Active learning: measure reduction in unanswered queries over time after admin corrections
+
+---
+
+# 9 — UX / UI Wireframes & Key Screens
+
+1. **Landing**
+
+   * Clean search bar + brief campus stats (active users today)
+2. **Chat UI**
+
+   * Left: chat list (recent queries)
+   * Middle: chat area with avatars, typing indicator, citation badges (source link)
+   * Right: quick links (bus timings, emergency, map)
+   * Floating mic icon (future voice)
+3. **Kiosk Mode**
+
+   * Big chat bubble, large text, quick FAQs as buttons (e.g., “Bus route”, “Hostel rules”)
+4. **Admin Panel**
+
+   * Tabs: Unanswered / Flagged / Documents / Users / Analytics
+   * Unanswered list: query → add canonical reply button → “Add to knowledge base”
+5. **Analytics Dashboard**
+
+   * Line chart: daily queries
+   * Pie chart: query categories
+   * Table: top unanswered
+   * KPI cards: avg latency, resolution rate, user retention
+
+Design notes: use soft campus colors, friendly avatar (Ghibli-inspired? you like that), simple micro-animations for replies.
+
+---
+
+# 10 — Timeline: Week-by-week (8 weeks)
+
+I assume you and maybe 1–2 teammates. If solo, scale tasks but still doable with full focus.
+
+## Week 0 (Prep — 3 days)
+
+* Project repo skeleton (frontend + backend)
+* Docs: README, architecture.md, API spec (OpenAPI stub)
+* Figma wireframes (main screens)
+* Acquire API keys (OpenAI, Pinecone, Supabase)
+
+## Week 1 (Ingestion + Indexing pipeline)
+
+* Build crawler & manual uploader
+* Implement chunker + embedding uploader script
+* Set up Vector DB + Postgres
+* Create simple CLI to ingest initial data from NIT website & club pages
+  **Deliverable:** Ingested 100 documents, indexed chunks in Vector DB
+
+## Week 2 (Backend Core + Basic RAG)
+
+* Implement `POST /api/query` with retrieval + LLM call
+* Implement caching (Redis)
+* End-to-end test: query → answer from docs
+  **Deliverable:** Working RAG endpoint with 80% of basic queries answered
+
+## Week 3 (Frontend Chat UI + Basic Flow)
+
+* Build chat UI, connect to backend endpoints
+* Show sources & confidence badges
+* Implement user session tracking (anonymous/students)
+  **Deliverable:** Demoable chat UI that answers queries with sources
+
+## Week 4 (Admin Panel + Correction Loop)
+
+* Build admin UI: list flagged queries, add canonical answers
+* Backend endpoints to store corrections and upsert into vector DB
+* Implement notifications to admin (email/slack)
+  **Deliverable:** Admin can correct and add knowledge; changes appear in chat
+
+## Week 5 (Analytics + Metrics + Tests)
+
+* Build analytics dashboards (queries/day, resolution rate)
+* Logging, error monitoring (Sentry), basic test coverage
+* Add unit tests for ingestion & retrieval
+  **Deliverable:** Dashboard and tests; reliable logging
+
+## Week 6 (Polish + Performance)
+
+* Optimize retrieval latency (Redis + smaller context windows)
+* Add metadata filters (query by category)
+* Improve prompts & system messages
+* UX polish & mobile responsiveness
+  **Deliverable:** <1.5s retrieval latency in cached scenarios, better UX
+
+## Week 7 (Pilot Launch)
+
+* Deploy frontend to Vercel, backend to Render, DB to Supabase, vector DB live
+* Recruit pilot users: clubs, placement cell, 50–200 students
+* Collect feedback & corrections for 1 week
+  **Deliverable:** Pilot running with real users & feedback
+
+## Week 8 (Metrics collection & Research Analysis)
+
+* Run experiments: measure hallucination rates, resolution improvements after admin corrections, time-to-resolution
+* Produce final README, demo video (3–4 min), research write-up (2–3 pages), slides
+* Prepare resume + portfolio demo
+  **Deliverable:** Production demo, metrics sheet, research comparison, polished repo + deployment
+
+---
+
+# 11 — Metrics & Targets (What to measure)
+
+**Product metrics**
+
+* Daily active users (DAU) — target 50–200 in pilot
+* Query volume/day — target 200+ in pilot
+* Resolution rate (first-response accepted) — target ≥ 80% after 2 weeks of corrections
+* Avg response latency — target < 3s (cached), < 6s (cold)
+
+**ML metrics**
+
+* Precision@k for retrieval (k=5) — target ≥ 0.7
+* Hallucination rate (human-labeled) — target < 10% after RAG+KG
+* Correction frequency — % queries needing admin → target < 20% after 2 weeks
+* Improvement in accuracy post-corrections — show % increase
+
+**Research metrics**
+
+* Compare hallucination & precision across methods (LLM-only vs RAG vs RAG+KG) — show stat table & graphs
+* A/B testing: show user satisfaction change with admin corrections
+
+---
+
+# 12 — Privacy & Ethics
+
+* Do not index PII unless you have consent (phone numbers, personal emails)
+* Rate-limit public access to avoid scraping abuse
+* Provide “report incorrect” and “request deletion” options
+* Store logs for minimal time (30 days recommended) unless required for audit
+* Use hashed user IDs for analytics; no raw personal data in analytics tables
+
+---
+
+# 13 — Repo Structure (recommended)
+
+```
+/campusgpt
+  /frontend (Next.js + TypeScript)
+  /backend (Fastify/Express + TypeScript)
+  /scripts
+    ingest/
+      crawler.py
+      chunker.py
+      embed_upload.py
+  /infrastructure
+    docker/
+    render/
+    vercel/
+  /docs
+    architecture.md
+    experiments.md
+    prompt-engineering.md
+  /notebooks
+    eval_retrieval.ipynb
+  README.md
+  LICENSE
+```
+
+---
+
+# 14 — CI/CD & DevOps
+
+* GitHub Actions:
+
+  * Lint + tests on PR
+  * Deploy to staging (Vercel/Render) on `main` branch
+* Secrets: GitHub Secrets for API keys
+* Env: `.env.example` with required vars
+* Health check endpoints + Sentry for error alerts
+* Backup: automated nightly dump of Postgres → cloud storage
+
+---
+
+# 15 — Demo & Pitch (for resume + interviews)
+
+Deliver:
+
+* Live deployed site link (Vercel)
+* Demo video (3–4 min) showing query examples, admin correction flow, analytics
+* Short research summary: problem, dataset, approach, results (precision, hallucination reduction)
+* Link to repo + instructions to run locally (docker compose)
+
+Resume snippet example (metrics-focused):
+
+> CampusGPT — Lead Developer (Full-stack + ML) — NIT Silchar
+> • Built a RAG-based campus assistant ingesting 1.2k docs and serving 400+ queries/day; achieved 85% resolution rate and reduced hallucination by 32% using KG-augmented retrieval. Deployed on Vercel/Render with Postgres & Pinecone.
+
+---
+
+# 16 — How to get users & pilot adoption (growth)
+
+* Contact student clubs (Illuminits, AAVEG, E-Cell) — offer private demo + integration
+* Placement/Hostel/Admin: show time-savings (answer automation)
+* Posters + QR codes in hostels/classrooms
+* Short workshop: “How to use CampusGPT” with 10–15 minute demo
+* Incentivize feedback with small rewards (snacks, freebies) during pilot
+
+---
+
+# 17 — Research Experiments (quick plan)
+
+1. **Experiment A — LLM-only vs RAG**
+
+   * Dataset: 200 curated Q/A pairs from campus FAQs
+   * Metric: Correctness (human-evaluated), Hallucination rate
+2. **Experiment B — RAG vs RAG+KG**
+
+   * Build small KG of 100 entities (professors, courses, rooms)
+   * Metric: precision@k, retrieval latency, user satisfaction
+3. **Active Learning Study**
+
+   * Track how many queries are unresolved week-by-week before & after admin updates
+   * Measure % reduction in admin interventions
+
+Report these in a 2–3 page writeup and include charts.
+
+---
+
+# 18 — Estimated Cost (minimal pilot)
+
+* Pinecone (small) — ~$20–50/month (or Milvus free self-hosted)
+* OpenAI usage (embeddings + completions) — ~$50–200 depending on volume
+* Vercel/Render — free tier to ~$10–20/month
+* Supabase Postgres — free tier to ~$25/month
+* Domain & small extras — ~$10–20
+
+Total pilot monthly cost: **~$100–$300** (can be lower if you limit API calls or use open-source embeddings).
+
+---
+
+# 19 — Quick Starter Checklist (first 48 hours)
+
+* Create GitHub repo with branches: `main`, `dev`
+* Reserve names / domain (e.g., campusgpt.nits.ac.in or campusgpt-demo.vercel.app)
+* Provision accounts: OpenAI, Pinecone (or Milvus), Supabase, Vercel, Render
+* Create Figma pages for 3 screens: Landing, Chat, Admin Unanswered
+* Run a simple admin-upload → embed → query loop locally
+
+---
+
+# 20 — Final notes (brutal & honest)
+
+* **Focus on ingestion quality.** Most chat assistants fail because the knowledge base is poor or unstructured. Good chunking + metadata beats fancy prompts.
+* **Ship early, iterate quickly.** Get 50 real users in pilot and collect corrections — that’s where models improve fastest.
+* **Keep metrics visible.** Resolution rate + correction rate are your best storytelling numbers for resume/interviews.
+* **Paper or blog post optional, but powerful.** A short write-up comparing RAG vs RAG+KG will make you stand out for ML roles.
+
+---
+
+If you want, I’ll now:
+
+1. Generate the **exact folder-by-folder starter code template** (boilerplate Next.js + Fastify + simple ingestion script) OR
+2. Produce the **detailed prompt templates** and system prompts for RAG + admin workflow, OR
+3. Draft a **3–4 minute demo script + slide deck** for pilot outreach.
+
+Pick one and I’ll produce it in the next message.
